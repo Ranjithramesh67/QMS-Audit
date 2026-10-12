@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+.env
+*.log
+.DS_Store
+backend/uploads/
+backend/prisma/migrations/dev.db
+coverage/
+.vite/
+frontend/e2e/.artifacts/
+frontend/playwright-report/
+frontend/test-results/

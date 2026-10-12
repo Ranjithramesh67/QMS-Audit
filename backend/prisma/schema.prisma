@@ -1,0 +1,702 @@
+// QMS Audit Platform - Prisma schema
+// Covers Masters -> Planning -> Execution -> Findings -> CAPA -> Verification -> Closure
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum AuditCategory {
+  SYSTEM
+  PRODUCT
+  PROCESS
+}
+
+enum AuditStatus {
+  DRAFT
+  PLANNED
+  PENDING_APPROVAL
+  APPROVED
+  IN_PROGRESS
+  FINDINGS_RECORDED
+  CAPA_IN_PROGRESS
+  VERIFICATION
+  CLOSED
+  CANCELLED
+}
+
+enum FindingType {
+  C
+  NC
+  OFI
+  NA
+}
+
+enum Severity {
+  MAJOR
+  MINOR
+  OBSERVATION
+}
+
+enum AnswerValue {
+  YES
+  NO
+  NA
+}
+
+enum CapaStatus {
+  PENDING
+  ACKNOWLEDGED
+  IN_PROGRESS
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  VERIFIED
+  CLOSED
+}
+
+enum CapaActionStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+}
+
+enum RootCauseMethod {
+  FIVE_WHY
+  FISHBONE
+}
+
+enum AuditorType {
+  INTERNAL
+  EXTERNAL
+}
+
+enum CompetencyLevel {
+  TRAINEE
+  QUALIFIED
+  SENIOR
+  LEAD
+}
+
+enum ProgramStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum NotificationType {
+  AUDIT_SCHEDULED
+  DEADLINE_UPCOMING
+  NC_ASSIGNED
+  CAPA_OVERDUE
+  APPROVAL_REQUIRED
+  APPROVAL_DECISION
+  SYSTEM
+}
+
+enum DocumentType {
+  SOP
+  WORK_INSTRUCTION
+  EVIDENCE
+  STANDARD
+  RECORD
+  OTHER
+}
+
+enum DocumentStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  OBSOLETE
+}
+
+// ---------------------------------------------------------------------------
+// Identity & Access
+// ---------------------------------------------------------------------------
+
+model Role {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?
+  /// Permission keys. `*` is the wildcard granting full access.
+  permissions String[] @default([])
+  /// System roles (the six built-ins) cannot be deleted.
+  isSystem    Boolean  @default(false)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users User[]
+
+  @@map("roles")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  roleId       String
+  phone        String?
+  designation  String?
+  active       Boolean  @default(true)
+  plantId      String?
+  departmentId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  role       Role        @relation(fields: [roleId], references: [id])
+  plant      Plant?      @relation(fields: [plantId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+
+  auditorProfile Auditor?
+  auditsCreated  Audit[]            @relation("AuditCreatedBy")
+  auditsApproved Audit[]            @relation("AuditApprovedBy")
+  answers        AuditResponse[]
+  findingsRaised Finding[]          @relation("FindingRaisedBy")
+  capasOwned     Capa[]             @relation("CapaResponsible")
+  capasVerified  Capa[]             @relation("CapaVerifiedBy")
+  notifications  Notification[]
+  documents      Document[]
+  auditLogs      AuditLog[]
+
+  @@index([roleId])
+}
+
+// ---------------------------------------------------------------------------
+// Organisation masters
+// ---------------------------------------------------------------------------
+
+model Company {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  address   String?
+  city      String?
+  country   String?
+  phone     String?
+  email     String?
+  website   String?
+  logoUrl   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plants Plant[]
+}
+
+model Plant {
+  id        String   @id @default(cuid())
+  companyId String
+  code      String
+  name      String
+  address   String?
+  city      String?
+  country   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company     Company      @relation(fields: [companyId], references: [id])
+  departments Department[]
+  users       User[]
+  audits      Audit[]
+
+  @@unique([companyId, code])
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  plantId   String
+  code      String
+  name      String
+  headName  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plant     Plant      @relation(fields: [plantId], references: [id])
+  processes Process[]
+  users     User[]
+  auditees  Auditee[]
+  audits    Audit[]
+  findings  Finding[]
+
+  @@unique([plantId, code])
+}
+
+model Process {
+  id           String   @id @default(cuid())
+  departmentId String
+  parentId     String?
+  code         String
+  name         String
+  description  String?
+  owner        String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id])
+  parent     Process?   @relation("ProcessTree", fields: [parentId], references: [id])
+  children   Process[]  @relation("ProcessTree")
+
+  @@unique([departmentId, code])
+}
+
+// ---------------------------------------------------------------------------
+// Audit setup masters
+// ---------------------------------------------------------------------------
+
+model AuditType {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  name        String
+  category    AuditCategory @default(SYSTEM)
+  description String?
+  active      Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  audits Audit[]
+}
+
+model Standard {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  version     String?
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  checklists Checklist[]
+  programs   AuditProgram[]
+  audits     Audit[]
+}
+
+model Checklist {
+  id          String   @id @default(cuid())
+  standardId  String
+  code        String
+  name        String
+  description String?
+  version     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  standard Standard @relation(fields: [standardId], references: [id])
+  clauses  Clause[]
+
+  @@unique([standardId, code])
+}
+
+// Clauses are self-referencing to support nested clause/sub-clause structures.
+model Clause {
+  id          String   @id @default(cuid())
+  checklistId String
+  parentId    String?
+  number      String
+  title       String
+  description String?
+  requirement String?
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  checklist     Checklist       @relation(fields: [checklistId], references: [id])
+  parent        Clause?         @relation("ClauseTree", fields: [parentId], references: [id])
+  children      Clause[]        @relation("ClauseTree")
+  auditClauses  AuditClause[]
+  responses     AuditResponse[]
+  findings      Finding[]
+  scheduleItems AuditScheduleItem[]
+
+  @@unique([checklistId, number])
+}
+
+model AuditProgram {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  name        String
+  year        Int
+  standardId  String?
+  status      ProgramStatus @default(DRAFT)
+  description String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  standard Standard? @relation(fields: [standardId], references: [id])
+  audits   Audit[]
+}
+
+// ---------------------------------------------------------------------------
+// People masters
+// ---------------------------------------------------------------------------
+
+model Auditor {
+  id                     String          @id @default(cuid())
+  userId                 String?         @unique
+  type                   AuditorType     @default(INTERNAL)
+  name                   String
+  email                  String?
+  phone                  String?
+  organisation           String?
+  competencyLevel        CompetencyLevel @default(QUALIFIED)
+  qualifications         String[]        @default([])
+  certifications         String[]        @default([])
+  competencyExpiry       DateTime?
+  competentForCategories AuditCategory[]  @default([])
+  active                 Boolean         @default(true)
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  user        User?            @relation(fields: [userId], references: [id])
+  auditTeam   AuditAuditor[]
+  schedule    AuditScheduleItem[]
+}
+
+model Auditee {
+  id           String   @id @default(cuid())
+  name         String
+  email        String?
+  phone        String?
+  designation  String?
+  departmentId String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department? @relation(fields: [departmentId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Classification masters
+// ---------------------------------------------------------------------------
+
+model FindingTypeConfig {
+  id          String @id @default(cuid())
+  code        String @unique
+  name        String
+  description String?
+  requiresCapa Boolean @default(false)
+  active      Boolean @default(true)
+}
+
+model SeverityConfig {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  name        String
+  weight      Int     @default(1)
+  color       String?
+  description String?
+  active      Boolean @default(true)
+}
+
+// ---------------------------------------------------------------------------
+// Audit plan (planning stage)
+// ---------------------------------------------------------------------------
+
+model Audit {
+  id            String        @id @default(cuid())
+  code          String        @unique
+  title         String
+  programId     String?
+  standardId    String?
+  auditTypeId   String?
+  category      AuditCategory @default(SYSTEM)
+  plantId       String?
+  departmentId  String?
+  scope         String?
+  objectives    String?
+  criteria      String?
+  plannedStart  DateTime?
+  plannedEnd    DateTime?
+  actualStart   DateTime?
+  actualEnd     DateTime?
+  status        AuditStatus   @default(DRAFT)
+  locked        Boolean       @default(false)
+  createdById   String
+  approvedById  String?
+  approvedAt    DateTime?
+  approvalNotes String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  program    AuditProgram? @relation(fields: [programId], references: [id])
+  standard   Standard?     @relation(fields: [standardId], references: [id])
+  auditType  AuditType?    @relation(fields: [auditTypeId], references: [id])
+  plant      Plant?        @relation(fields: [plantId], references: [id])
+  department Department?   @relation(fields: [departmentId], references: [id])
+  createdBy  User          @relation("AuditCreatedBy", fields: [createdById], references: [id])
+  approvedBy User?         @relation("AuditApprovedBy", fields: [approvedById], references: [id])
+
+  team          AuditAuditor[]
+  clauses       AuditClause[]
+  scheduleItems AuditScheduleItem[]
+  responses     AuditResponse[]
+  findings      Finding[]
+  attachments   Attachment[]
+}
+
+model AuditAuditor {
+  id        String  @id @default(cuid())
+  auditId   String
+  auditorId String
+  isLead    Boolean @default(false)
+
+  audit   Audit   @relation(fields: [auditId], references: [id])
+  auditor Auditor @relation(fields: [auditorId], references: [id])
+
+  @@unique([auditId, auditorId])
+}
+
+model AuditClause {
+  id       String  @id @default(cuid())
+  auditId  String
+  clauseId String
+
+  audit  Audit  @relation(fields: [auditId], references: [id])
+  clause Clause @relation(fields: [clauseId], references: [id])
+
+  @@unique([auditId, clauseId])
+}
+
+model AuditScheduleItem {
+  id           String    @id @default(cuid())
+  auditId      String
+  clauseId     String?
+  auditorId    String?
+  departmentId String?
+  date         DateTime
+  startTime    String?
+  endTime      String?
+  notes        String?
+
+  audit    Audit    @relation(fields: [auditId], references: [id])
+  clause   Clause?  @relation(fields: [clauseId], references: [id])
+  auditor  Auditor? @relation(fields: [auditorId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Audit execution
+// ---------------------------------------------------------------------------
+
+model AuditResponse {
+  id          String      @id @default(cuid())
+  auditId     String
+  clauseId    String
+  documented  AnswerValue @default(NA)
+  implemented AnswerValue @default(NA)
+  applicable  Boolean     @default(true)
+  comments    String?
+  evidence    String?
+  answeredById String?
+  answeredAt  DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  audit     Audit   @relation(fields: [auditId], references: [id])
+  clause    Clause  @relation(fields: [clauseId], references: [id])
+  answeredBy User?  @relation(fields: [answeredById], references: [id])
+
+  @@unique([auditId, clauseId])
+}
+
+// ---------------------------------------------------------------------------
+// Findings
+// ---------------------------------------------------------------------------
+
+model Finding {
+  id               String       @id @default(cuid())
+  code             String       @unique
+  auditId          String
+  clauseId         String?
+  departmentId     String?
+  type             FindingType  @default(NC)
+  severity         Severity     @default(MINOR)
+  title            String
+  requirement      String?
+  observation      String
+  objectiveEvidence String?
+  status           String       @default("OPEN")
+  raisedById       String
+  dueDate          DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  audit      Audit       @relation(fields: [auditId], references: [id])
+  clause     Clause?     @relation(fields: [clauseId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  raisedBy   User        @relation("FindingRaisedBy", fields: [raisedById], references: [id])
+  capa       Capa?
+  attachments Attachment[]
+}
+
+// ---------------------------------------------------------------------------
+// CAPA (Corrective & Preventive Action)
+// ---------------------------------------------------------------------------
+
+model Capa {
+  id                  String          @id @default(cuid())
+  findingId           String          @unique
+  status              CapaStatus      @default(PENDING)
+  acknowledgedAt      DateTime?
+  acknowledgedBy      String?
+  immediateCorrection String?
+  correctionDate      DateTime?
+  rootCauseMethod     RootCauseMethod @default(FIVE_WHY)
+  rootCause           String?
+  fishboneJson        Json?
+  targetDate          DateTime?
+  responsibleId       String?
+  submittedAt         DateTime?
+  acceptedAt          DateTime?
+  acceptedBy          String?
+  rejectionReason     String?
+  verificationMethod  String?
+  verificationNotes   String?
+  effectivenessResult String?
+  verifiedAt          DateTime?
+  verifiedById        String?
+  closedAt            DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  finding     Finding      @relation(fields: [findingId], references: [id])
+  responsible User?        @relation("CapaResponsible", fields: [responsibleId], references: [id])
+  verifiedBy  User?        @relation("CapaVerifiedBy", fields: [verifiedById], references: [id])
+  actions     CapaAction[]
+  whys        CapaWhy[]
+  attachments Attachment[]
+}
+
+model CapaAction {
+  id           String           @id @default(cuid())
+  capaId       String
+  description  String
+  responsible  String?
+  dueDate      DateTime?
+  status       CapaActionStatus @default(OPEN)
+  completedAt  DateTime?
+  createdAt    DateTime         @default(now())
+
+  capa Capa @relation(fields: [capaId], references: [id])
+}
+
+model CapaWhy {
+  id      String @id @default(cuid())
+  capaId  String
+  level   Int
+  question String
+  answer  String
+
+  capa Capa @relation(fields: [capaId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Documents & attachments
+// ---------------------------------------------------------------------------
+
+model Document {
+  id            String         @id @default(cuid())
+  code          String         @unique
+  name          String
+  type          DocumentType   @default(SOP)
+  standardId    String?
+  currentVersion String        @default("1.0")
+  status        DocumentStatus @default(DRAFT)
+  description   String?
+  fileUrl       String?
+  fileSize      Int?
+  mimeType      String?
+  uploadedById  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  uploadedBy User?             @relation(fields: [uploadedById], references: [id])
+  versions   DocumentVersion[]
+}
+
+model DocumentVersion {
+  id         String   @id @default(cuid())
+  documentId String
+  version    String
+  fileUrl    String
+  fileSize   Int?
+  note       String?
+  createdById String?
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id])
+}
+
+// Polymorphic attachment: entityType = AUDIT | FINDING | CAPA | RESPONSE
+model Attachment {
+  id           String   @id @default(cuid())
+  entityType   String
+  entityId     String
+  filename     String
+  originalName String
+  fileUrl      String
+  fileSize     Int
+  mimeType     String
+  version      Int      @default(1)
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  auditId  String?
+  findingId String?
+  capaId    String?
+
+  audit   Audit?   @relation(fields: [auditId], references: [id])
+  finding Finding? @relation(fields: [findingId], references: [id])
+  capa    Capa?    @relation(fields: [capaId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications & audit trail
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id         String           @id @default(cuid())
+  userId     String
+  type       NotificationType @default(SYSTEM)
+  title      String
+  message    String
+  entityType String?
+  entityId   String?
+  read       Boolean          @default(false)
+  emailedAt  DateTime?
+  createdAt  DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, read])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  meta       Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
